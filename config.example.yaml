@@ -1,22 +1,38 @@
 # Copy to config.yaml and edit.  (config.yaml is git-ignored.)
 
-home: "60614"          # ZIP code or full street address
+home: "14620"          # ZIP code or full street address
 radius_miles: 10
 max_zips: 60           # ZIP codes queried per search, nearest first
 precise_geocoding: true  # street-level pins via the free Census geocoder
 
-network:
-  # none | csv | fhir   (see README, "Connect your network")
-  type: none
+# One entry per insurance network. Each search uses the first network whose
+# `services` list names that service (keys are in finder/services.py), else the
+# one marked "*".
+#
+#   type: fhir -> the insurer's public Plan-Net provider directory (no login)
+#   type: csv  -> a CSV you export/maintain: an "npi" column, or "name" + "zip"
+#   type: none -> network status shows as unknown
+networks:
+  - name: MVP
+    services: ["*"]
+    type: fhir
+    fhir_base_url: https://api.mvphealthcare.com/provdirfhirapi
+    # Empty = anyone listed in MVP's directory counts. To narrow to your plan:
+    #   curl 'localhost:8765/api/networks?q=<plan name from your card>'
+    fhir_network_ids: []
+    fhir_eager_check: 150
 
-  # type: csv  ->  any CSV with an "npi" column (hospitals: put the CMS CCN in that column)
-  csv_path: data/in_network.csv
+  - name: Guardian Dental
+    services: [dentist]
+    type: csv
+    csv_path: data/guardian_dental.csv
 
-  # type: fhir ->  your insurer's public Plan-Net provider directory (no login)
-  # Unverified starting points from insurer docs; confirm for your plan:
-  #   UnitedHealthcare  https://flex.optum.com/fhirpublic/R4
-  #   Cigna             https://p-hi2.digitaledge.cigna.com/ProviderDirectory/v1
-  #   Humana            https://fhir.humana.com/api
-  fhir_base_url: ""
-  fhir_network_ids: []   # find with: curl 'localhost:8765/api/networks?q=<plan name>'
-  fhir_eager_check: 60
+  - name: Guardian Vision
+    services: [optometry]
+    type: csv
+    csv_path: data/guardian_vision.csv
+
+# Other public Plan-Net directories (unverified starting points):
+#   UnitedHealthcare  https://flex.optum.com/fhirpublic/R4
+#   Cigna             https://p-hi2.digitaledge.cigna.com/ProviderDirectory/v1
+#   Humana            https://fhir.humana.com/api

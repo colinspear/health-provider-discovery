@@ -132,10 +132,15 @@ function openDetail(id) {
   const ccLink = isHosp ? `<a target="_blank" rel="noopener" href="https://www.medicare.gov/care-compare/details/hospital/${esc(f.ccn)}">Medicare Care Compare</a>` : "";
   const facts = [
     ["Credential", p.credential], ["Specialty", p.specialty], ["Group", f.group], ["Medical school", f.medical_school],
-    ["Graduated", f.grad_year], ["Telehealth", f.telehealth ? "Yes" : null], ["Emergency dept", isHosp ? (f.emergency ? "Yes" : "No") : null],
+    ["Graduated", f.grad_year], ["Telehealth", f.telehealth ? "Yes" : null], ["New patients", f.accepting],
+    ["Emergency dept", isHosp ? (f.emergency ? "Yes" : "No") : null], ["Birthing-friendly", f.birthing_friendly ? "Yes (CMS designation)" : null],
     ["Ownership", f.ownership], ["NPI", isHosp ? null : p.id],
   ].filter(([, v]) => v != null && v !== "");
   const hosps = (f.hospitals || []).map((h) => `<li>${esc(h.name)}${h.stars ? ` (${h.stars}★)` : ""}</li>`).join("");
+  const procs = (f.procedures || []).map((x) => `<li>${esc(x.name)}: ${esc(x.count)} cases, ${Math.round(x.percentile)}th percentile</li>`).join("");
+  const gms = (f.group_measures || []).map((m) => `<li>${"★".repeat(Math.round(m.stars))}${"☆".repeat(5 - Math.round(m.stars))} ${esc(m.title)}${m.rate ? ` <span class="note">(${esc(m.rate)}%)</span>` : ""}</li>`).join("");
+  const tally = (label, t) => t ? `<li>${esc(label)}: ${t.better} better, ${t.of - t.better - t.worse} same, <b>${t.worse}</b> worse than national (of ${t.of})</li>` : "";
+  const hospQ = isHosp ? [tally("Mortality", f.mortality), tally("Safety", f.safety), tally("Readmissions", f.readmission)].join("") : "";
   const bk = p.breakdown.map((c) => `<div class="bk"><span class="lab">${esc(c.label)} <small class="note">×${c.weight}</small></span>
       <span class="meter"><i style="width:${c.value == null ? 0 : Math.round(c.value * 100)}%"></i></span>
       <span class="det">${esc(c.detail)}</span></div>`).join("");
@@ -149,14 +154,17 @@ function openDetail(id) {
       ${p.distance != null ? ` · ${p.distance.toFixed(1)} mi` : ""}</div>
     <h3>Network</h3>
     <div><span class="pill net-${p.network}">${NET_LABEL[p.network]}</span> <span class="note">${esc(p.network_detail)}</span></div>
-    ${p.network === "unchecked" || p.network === "unknown" ? `<p><button class="btn" id="chk">Check network now</button></p>` : ""}
+    ${state.data.network_source !== "none" && (p.network === "unchecked" || p.network === "unknown") ? `<p><button class="btn" id="chk">Check network now</button></p>` : ""}
     <p class="note">Directories are often stale. Call the office and confirm they take your specific plan before booking.</p>
     <h3>Score ${p.score != null ? Math.round(p.score) : "n/a"} <span class="note">(${Math.round(p.confidence * 100)}% of quality data available)</span></h3>
     ${bk}
-    <p class="note">Missing data pulls the score toward 50 rather than counting as zero. MIPS mostly measures Medicare reporting, not outcomes, so use the score as a tie-breaker.</p>
+    <p class="note">Missing data pulls the score toward 50 rather than counting as zero. Most of these signals come from Medicare and describe the practice more than the person, so treat the score as a way to build a shortlist.</p>
     <h3>Details</h3>
     <dl>${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
-    ${hosps ? `<h3>Hospital affiliations</h3><ul>${hosps}</ul>` : ""}
+    ${hospQ ? `<h3>CMS outcome measures</h3><ul>${hospQ}</ul>` : ""}
+    ${procs ? `<h3>Medicare procedure volume</h3><ul>${procs}</ul><p class="note">Higher volume tends to mean better surgical outcomes. These counts are Medicare patients only.</p>` : ""}
+    ${gms ? `<h3>Practice quality measures</h3><ul>${gms}</ul><p class="note">Reported by the whole practice group to Medicare.</p>` : ""}
+    ${hosps ? `<h3>Local hospital affiliations</h3><ul>${hosps}</ul>` : ""}
     <p>${npiLink} ${ccLink}</p>`;
   el.hidden = false;
   el.querySelector(".close").onclick = closeDetail;
@@ -180,19 +188,22 @@ async function search(ev) {
   if ($("#where").value.trim()) params.set("where", $("#where").value.trim());
   $("#status").textContent = "Searching… (first search in an area can take a minute; later ones are cached)";
   $("#list").innerHTML = "";
+  const reqId = (state.reqId = (state.reqId || 0) + 1);
   try {
     const r = await fetch(`api/search?${params}`);
     const body = await r.json();
+    if (reqId !== state.reqId) return; // a newer search superseded this one
     if (!r.ok) throw new Error(body.detail || r.statusText);
     state.data = body;
     state.needFit = true;
     const n = body.providers.length;
     const inNet = body.providers.filter((p) => p.network === "in_network").length;
     $("#status").textContent = `${n} found within ${body.radius} mi of ${body.origin.query}` +
-      (body.network_source === "none" ? " · no network source configured" : ` · ${inNet} in network`) +
+      (body.network_source === "none" ? " · no network source for this service" : ` · ${inNet} in ${body.network_label} network`) +
       (body.elapsed ? ` · ${body.elapsed}s` : "");
     localStorage.setItem("hpd", JSON.stringify({ service: $("#service").value, where: $("#where").value, radius: $("#radius").value }));
   } catch (e) {
+    if (reqId !== state.reqId) return;
     state.data = null;
     $("#status").textContent = `Search failed: ${e.message}`;
   }
@@ -213,7 +224,7 @@ async function init() {
   } catch { /* ignore */ }
   const banner = $("#banner");
   if (cfg.demo) { banner.hidden = false; banner.textContent = "DEMO MODE: every provider shown is fictional. Run without --demo for real data."; }
-  else if (cfg.network === "none") { banner.hidden = false; banner.textContent = "No network source configured, so network status shows as unknown. See README → “Connect your network”."; }
+  else if (!cfg.networks.length) { banner.hidden = false; banner.textContent = "No network source configured, so network status shows as unknown. See README → “Connect your network”."; }
   $("#q").addEventListener("submit", search);
   $("#service").addEventListener("change", search);
   for (const id of ["#netfilter", "#sort"]) $(id).addEventListener("change", render);

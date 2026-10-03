@@ -9,7 +9,7 @@ import logging
 
 from ..cache import DAY, Http
 from ..models import Provider
-from ..services import Service
+from ..services import Service, code_matches
 
 log = logging.getLogger(__name__)
 
@@ -28,10 +28,14 @@ def parse_result(r: dict, svc: Service) -> Provider | None:
         return None
     taxes = r.get("taxonomies", [])
     if svc.codes:
-        matching = [t for t in taxes if t.get("code") in svc.codes]
+        # Judge by the provider's *primary* taxonomy when they mark one: a hospitalist
+        # who also lists Internal Medicine shouldn't show up as a primary care doctor.
+        primary = [t for t in taxes if t.get("primary")]
+        pool = primary or taxes
+        matching = [t for t in pool if code_matches(t.get("code", ""), svc.codes)]
         if not matching:
             return None
-        tax = next((t for t in matching if t.get("primary")), matching[0])
+        tax = matching[0]
     else:
         tax = next((t for t in taxes if t.get("primary")), taxes[0] if taxes else {})
     addr = next(
@@ -51,7 +55,7 @@ def parse_result(r: dict, svc: Service) -> Provider | None:
         id=str(r["number"]),
         kind=kind,
         name=name,
-        specialty=tax.get("desc", ""),
+        specialty=(tax.get("desc") or "").split(", ")[-1] if tax.get("desc") else "",
         credential=(basic.get("credential") or "").replace(".", ""),
         street=_title(street),
         city=_title(addr.get("city", "")),

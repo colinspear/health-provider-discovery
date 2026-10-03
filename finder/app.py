@@ -38,7 +38,9 @@ def create_app(settings=None) -> FastAPI:
             "home": settings.home,
             "radius": settings.radius_miles,
             "demo": settings.demo,
-            "network": settings.network.type,
+            "networks": [
+                {"name": n.name, "type": n.type, "services": n.services} for n in settings.networks
+            ],
             "services": [
                 {"key": s.key, "label": s.label, "group": s.group, "kind": s.kind, "tip": s.tip}
                 for s in SERVICES

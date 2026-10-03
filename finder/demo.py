@@ -61,6 +61,10 @@ class DemoEngine:
         }
         if rng.random() > 0.3:
             facts["mips_score"] = round(rng.uniform(40, 100), 1)
+        if rng.random() > 0.5:
+            facts["group_measures"] = [{"title": "Controlling High Blood Pressure", "rate": "70", "stars": rng.choice([2, 3, 4, 5])}]
+        if svc.procedural and rng.random() > 0.4:
+            facts["procedures"] = [{"name": "Demo procedure", "count": str(rng.randint(11, 200)), "percentile": rng.randint(5, 99)}]
         if rng.random() > 0.25:
             facts["hospitals"] = [{"ccn": "DEMO", "name": rng.choice(HOSPITALS), "stars": rng.choice([2, 3, 4, 5])}]
         return Provider(
@@ -80,19 +84,19 @@ class DemoEngine:
             p.distance = round(haversine_miles(CENTER, (p.lat, p.lon)), 2)
             p.network = rng.choices(["in_network", "out_of_network", "not_listed"], [0.7, 0.15, 0.15])[0]
             p.network_detail = "Demo data"
-            scoring.score(p, radius)
+            scoring.score(p, radius, svc.procedural)
         providers.sort(key=lambda p: -(p.score or 0))
         self._last.update({p.id: p for p in providers})
         return {
             "service": {"key": svc.key, "label": svc.label, "kind": svc.kind, "tip": svc.tip},
             "origin": {"lat": CENTER[0], "lon": CENTER[1], "query": "DEMO (Chicago)"},
-            "radius": radius, "zips_searched": 0, "network_source": "demo", "elapsed": 0,
+            "radius": radius, "zips_searched": 0, "network_source": "demo", "network_label": "Demo", "elapsed": 0,
             "demo": True,
             "providers": [p.to_dict() for p in providers],
         }
 
     async def check_network(self, pid: str) -> dict:
-        return self._last[pid].to_dict()
+        return self._last[pid].to_dict()  # KeyError -> 404
 
     async def find_networks(self, q: str) -> list[dict]:
         return [{"plan": f"Demo {q} PPO", "plan_id": "demo", "network_ids": ["demo-net"]}]

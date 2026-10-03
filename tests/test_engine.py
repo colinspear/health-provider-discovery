@@ -58,13 +58,15 @@ def cms_router(rows_by_dataset):
 async def test_clinician_search_end_to_end(settings):
     def nppes(request):
         z = request.url.params["postal_code"]
-        if request.url.params["taxonomy_description"] != "Family Medicine":
+        if request.url.params["taxonomy_description"] != "Family":
             return httpx.Response(200, json={"result_count": 0, "results": []})
         results = {
             "60614": [
                 nppes_result("1111111111", "Ada", "Lovelace", "60614"),
                 nppes_result("3333333333", "Wrong", "Specialty", "60614", code="207N00000X", desc="Dermatology"),
                 nppes_result("4444444444", "Retired", "Doc", "60614", status="D"),
+                nppes_result("6666666666", "Tele", "Hospitalist", "60614"),
+                nppes_result("7777777777", "Ward", "Hospitalist", "60614"),
             ],
             "60657": [nppes_result("2222222222", "Bob", "Builder", "60657"),
                       nppes_result("1111111111", "Ada", "Lovelace", "60614")],  # dup
@@ -72,17 +74,35 @@ async def test_clinician_search_end_to_end(settings):
         return httpx.Response(200, json={"result_count": len(results), "results": results})
 
     respx.get("https://npiregistry.cms.hhs.gov/api/").mock(side_effect=nppes)
-    respx.post(url__regex=r"https://geocoding\.geo\.census\.gov/.*addressbatch").mock(
-        return_value=httpx.Response(200, text=(
-            '"1111111111","2400 N Clark St, Chicago, IL, 60614","Match","Exact","2400 N CLARK ST, CHICAGO, IL, 60614","-87.6400,41.9250","1","L"\n'
-            '"2222222222","2400 N Clark St, Chicago, IL, 60657","No_Match"\n'
-        )))
+    def census(request):
+        # match only addresses in 60614; echo back the row ids we were sent
+        lines = [ln for ln in request.content.decode(errors="ignore").splitlines() if ln[:1].isdigit()]
+        out = []
+        for ln in lines:
+            rid = ln.split(",")[0]
+            if ln.rstrip().endswith("60614"):
+                out.append(f'"{rid}","x","Match","Exact","x","-87.6400,41.9250","1","L"')
+            else:
+                out.append(f'"{rid}","x","No_Match"')
+        return httpx.Response(200, text="\n".join(out))
+
+    respx.post(url__regex=r"https://geocoding\.geo\.census\.gov/.*addressbatch").mock(side_effect=census)
     respx.post(url__regex=r"https://data\.cms\.gov/.*").mock(side_effect=cms_router({
         "mj5m-pzi6": [{"npi": "1111111111", "med_sch": "NORTHWESTERN UNIVERSITY", "grd_yr": "2005",
-                       "facility_name": "LINCOLN PARK MED GROUP", "telehlth": "Y", "pri_spec": "FAMILY PRACTICE"}],
-        "a174-a962": [{"npi": "1111111111", "final_MIPS_score_without_CPB": "10", "final_MIPS_score": "92.5"}],
-        "27ea-46a8": [{"npi": "1111111111", "facility_type": "Hospital", "facility_affiliations_certification_number": "140281"}],
-        "xubh-q36u": [{"facility_id": "140281", "facility_name": "NORTHWESTERN MEMORIAL HOSPITAL", "hospital_overall_rating": "5"}],
+                       "facility_name": "LINCOLN PARK MED GROUP", "org_pac_id": "PAC1", "telehlth": "Y",
+                       "pri_spec": "FAMILY PRACTICE"},
+                      {"npi": "7777777777", "pri_spec": "HOSPITALIST"}],
+        "a174-a962": [{"npi": "1111111111", "source": "group", "final_mips_score_without_cpb": "10", "final_mips_score": "92.5"}],
+        "27ea-46a8": [{"npi": "1111111111", "facility_type": "Hospital", "facility_affiliations_certification_number": "140281"},
+                      {"npi": "1111111111", "facility_type": "Hospital", "facility_affiliations_certification_number": "050001"},
+                      {"npi": "6666666666", "facility_type": "Hospital", "facility_affiliations_certification_number": "050001"}],
+        "xubh-q36u": [{"facility_id": "140281", "facility_name": "NORTHWESTERN MEMORIAL HOSPITAL", "zip_code": "60657",
+                       "hospital_overall_rating": "5", "hospital_overall_rating_footnote": ""},
+                      {"facility_id": "050001", "facility_name": "FARAWAY HOSPITAL", "zip_code": "90210",
+                       "hospital_overall_rating": "Not Available", "hospital_overall_rating_footnote": "16"}],
+        "0ba7-2cb0": [{"org_pac_id": "PAC1", "measure_title": "Controlling High Blood Pressure", "prf_rate": "70", "star_value": "4"},
+                      {"org_pac_id": "PAC1", "measure_title": "Cost measure", "prf_rate": "5000", "star_value": ""}],
+        "n0yb-util": [{"npi": "1111111111", "procedure_category": "Knee replacement", "count": "40", "percentile": "90"}],
     }))
 
     eng = Engine(settings)
@@ -92,14 +112,21 @@ async def test_clinician_search_end_to_end(settings):
         await eng.close()
 
     ids = [p["id"] for p in out["providers"]]
-    assert sorted(ids) == ["1111111111", "2222222222"]  # dedup, taxonomy filter, inactive dropped
+    # dedup, taxonomy filter, inactive dropped, telehealth-only (6666) and hospitalist (7777) dropped
+    assert sorted(ids) == ["1111111111", "2222222222"]
     ada = next(p for p in out["providers"] if p["id"] == "1111111111")
     bob = next(p for p in out["providers"] if p["id"] == "2222222222")
     assert ada["name"] == "Ada Lovelace" and ada["credential"] == "MD" and ada["zip"] == "60614"
     assert ada["located"] == "address" and bob["located"] == "zip"
     assert ada["facts"]["mips_score"] == 92.5  # not the "without CPB" column
     assert ada["facts"]["grad_year"] == 2005 and ada["facts"]["telehealth"] is True
+    assert [h["name"] for h in ada["facts"]["hospitals"]] == ["Northwestern Memorial Hospital"]  # far one dropped
     assert ada["facts"]["hospitals"][0]["stars"] == 5
+    assert ada["facts"]["mips_source"] == "group"
+    assert ada["facts"]["group_measures"] == [{"title": "Controlling High Blood Pressure", "rate": "70", "stars": 4.0}]
+    assert ada["facts"]["procedures"][0]["percentile"] == 90  # collected, but not scored for primary care
+    assert "volume" not in {c["key"] for c in ada["breakdown"]}
+    assert all(0 <= c["value"] <= 1 for c in ada["breakdown"] if c["value"] is not None)
     assert ada["score"] > bob["score"]  # real data beats no data
     assert ada["confidence"] == 1.0 and bob["confidence"] == 0.0
     assert ids[0] == "1111111111"
@@ -133,7 +160,7 @@ async def test_hospital_search(settings):
 
 @respx.mock
 async def test_fhir_network(settings):
-    settings.network = NetworkSettings(type="fhir", fhir_base_url="https://payer.example/fhir", fhir_network_ids=["net-ppo"])
+    settings.networks = [NetworkSettings(name="MVP", type="fhir", fhir_base_url="https://payer.example/fhir", fhir_network_ids=["net-ppo"])]
     respx.get("https://npiregistry.cms.hhs.gov/api/").mock(return_value=httpx.Response(200, json={"results": [
         nppes_result("1111111111", "Ada", "Lovelace", "60614"),
         nppes_result("2222222222", "Bob", "Builder", "60614"),

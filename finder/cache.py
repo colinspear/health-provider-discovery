@@ -47,7 +47,7 @@ class Cache:
 class Http:
     """httpx wrapper: caching, bounded concurrency, and a couple of retries."""
 
-    def __init__(self, cache: Cache, concurrency: int = 8, timeout: float = 30):
+    def __init__(self, cache: Cache, concurrency: int = 12, timeout: float = 30):
         self.cache = cache
         self.client = httpx.AsyncClient(
             timeout=timeout,
