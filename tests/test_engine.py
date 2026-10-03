@@ -158,9 +158,22 @@ async def test_hospital_search(settings):
     assert good["score"] > unrated["score"]
 
 
+def plannet_role(pid, nets_accepting):
+    """PractitionerRole in MVP's layout: network-reference then its newpatients sibling."""
+    ext = []
+    for net, code in nets_accepting:
+        ext.append({"url": "http://hl7.org/fhir/us/davinci-pdex-plan-net/StructureDefinition/network-reference",
+                    "valueReference": {"reference": f"Organization/{net}"}})
+        ext.append({"url": "http://hl7.org/fhir/us/davinci-pdex-plan-net/StructureDefinition/newpatients",
+                    "extension": [{"url": "acceptingPatients", "valueCodeableConcept": {"coding": [{"code": code}]}}]})
+    return {"resource": {"resourceType": "PractitionerRole", "practitioner": {"reference": f"Practitioner/{pid}"},
+                         "extension": ext}}
+
+
 @respx.mock
-async def test_fhir_network(settings):
-    settings.networks = [NetworkSettings(name="MVP", type="fhir", fhir_base_url="https://payer.example/fhir", fhir_network_ids=["net-ppo"])]
+async def test_fhir_network_roster(settings):
+    settings.networks = [NetworkSettings(name="MVP", type="fhir", fhir_base_url="https://payer.example/fhir",
+                                         fhir_network_ids=["net-epo"])]
     respx.get("https://npiregistry.cms.hhs.gov/api/").mock(return_value=httpx.Response(200, json={"results": [
         nppes_result("1111111111", "Ada", "Lovelace", "60614"),
         nppes_result("2222222222", "Bob", "Builder", "60614"),
@@ -169,28 +182,65 @@ async def test_fhir_network(settings):
     respx.post(url__regex=r"https://geocoding.*").mock(return_value=httpx.Response(200, text=""))
     respx.post(url__regex=r"https://data\.cms\.gov/.*").mock(return_value=httpx.Response(200, json={"results": []}))
 
-    def prac(request):
-        ident = request.url.params["identifier"]
-        rid = {"1111111111": "p1", "2222222222": "p2"}.get(ident.split("|")[-1])
-        entries = [{"resource": {"resourceType": "Practitioner", "id": rid}}] if rid else []
-        return httpx.Response(200, json={"resourceType": "Bundle", "entry": entries})
-
-    def role(request):
-        net = {"Practitioner/p1": "net-ppo", "Practitioner/p2": "net-hmo"}[request.url.params["practitioner"]]
-        ext = {"url": "http://hl7.org/fhir/us/davinci-pdex-plan-net/StructureDefinition/network-reference",
-               "valueReference": {"reference": f"Organization/{net}"}}
+    def roles(request):
+        assert "location.address-postalcode" in request.url.params
+        if request.url.params["location.address-postalcode"] != "60614" or request.url.params["specialty"] != "207Q00000X":
+            return httpx.Response(200, json={"resourceType": "Bundle", "entry": []})
         return httpx.Response(200, json={"resourceType": "Bundle", "entry": [
-            {"resource": {"resourceType": "PractitionerRole", "extension": [ext]}}]})
+            # Ada: in the EPO network but not accepting there; accepting in another network
+            plannet_role("p1", [("net-other", "newpt"), ("net-epo", "nopt")]),
+            plannet_role("p2", [("net-hmo", "newpt")]),
+        ]})
 
-    respx.get("https://payer.example/fhir/Practitioner").mock(side_effect=prac)
-    respx.get("https://payer.example/fhir/PractitionerRole").mock(side_effect=role)
+    def pracs(request):
+        ids = request.url.params["_id"].split(",")
+        npi = {"p1": "1111111111", "p2": "2222222222"}
+        return httpx.Response(200, json={"resourceType": "Bundle", "entry": [
+            {"resource": {"resourceType": "Practitioner", "id": i,
+                          "identifier": [{"system": "http://hl7.org/fhir/sid/us-npi", "value": npi[i]}],
+                          "communication": [{"coding": [{"code": "es", "display": "Spanish"}]}]}}
+            for i in ids if i in npi]})
+
+    respx.get("https://payer.example/fhir/PractitionerRole").mock(side_effect=roles)
+    respx.get("https://payer.example/fhir/Practitioner").mock(side_effect=pracs)
     eng = Engine(settings)
     try:
         out = await eng.search("primary_care")
     finally:
         await eng.close()
-    net = {p["id"]: p["network"] for p in out["providers"]}
-    assert net == {"1111111111": "in_network", "2222222222": "out_of_network", "5555555555": "not_listed"}
+    by = {p["id"]: p for p in out["providers"]}
+    assert {k: v["network"] for k, v in by.items()} == {
+        "1111111111": "in_network", "2222222222": "out_of_network", "5555555555": "not_listed"}
+    assert by["1111111111"]["facts"]["accepting"] == "Not accepting new patients"  # EPO status, not the other net's
+    assert by["1111111111"]["facts"]["languages"] == ["Spanish"]
+
+
+@respx.mock
+async def test_ny_discipline_by_license(settings):
+    ada = nppes_result("1111111111", "Ada", "Lovelace", "60614")
+    ada["taxonomies"][0].update({"state": "NY", "license": "012345"})
+    bob = nppes_result("2222222222", "Bob", "Builder", "60614")
+    bob["taxonomies"][0].update({"state": "NY", "license": "999"})
+    respx.get("https://npiregistry.cms.hhs.gov/api/").mock(return_value=httpx.Response(200, json={"results": [ada, bob]}))
+    respx.post(url__regex=r"https://geocoding.*").mock(return_value=httpx.Response(200, text=""))
+    respx.post(url__regex=r"https://data\.cms\.gov/.*").mock(return_value=httpx.Response(200, json={"results": []}))
+    respx.get(url__regex=r"https://health\.data\.ny\.gov/resource/ebmi-8ctw.json.*").mock(return_value=httpx.Response(200, json=[
+        {"licensenum": "12345", "licensetype": "MD", "effectivedate": "2020-01-02T00:00:00.000",
+         "webaction": "License surrender.  More text.", "webnotes": "Did a bad thing."},
+        {"licensenum": "999", "licensetype": "MD", "effectivedate": "2019-01-01T00:00:00.000",
+         "webaction": "Dismissed."},
+    ]))
+    eng = Engine(settings)
+    try:
+        out = await eng.search("primary_care")
+    finally:
+        await eng.close()
+    by = {p["id"]: p for p in out["providers"]}
+    d = by["1111111111"]["facts"]["discipline"]
+    assert d[0]["severity"] == "severe" and d[0]["date"] == "2020-01-02" and d[0]["action"] == "License surrender."
+    assert by["1111111111"]["flagged"] and not by["2222222222"]["flagged"]
+    assert "discipline" not in by["2222222222"]["facts"]  # dismissed actions ignored
+    assert by["1111111111"]["score"] < by["2222222222"]["score"]
 
 
 def test_parsers():
@@ -198,3 +248,40 @@ def test_parsers():
     assert z["60614"] == (41.922695, -87.652774)
     got = parse_batch_response('"7","a","Match","Exact","b","-87.1,41.2","1","L"\n"8","a","No_Match"\n')
     assert got == {"7": (41.2, -87.1)}
+
+
+@respx.mock
+async def test_fhir_facility_listed_by_name_and_distance(settings):
+    settings.networks = [NetworkSettings(name="MVP", type="fhir", fhir_base_url="https://payer.example/fhir",
+                                         fhir_network_ids=["net-epo"])]
+    respx.post(url__regex=r"https://geocoding.*").mock(return_value=httpx.Response(200, text=""))
+    respx.post(url__regex=r"https://data\.cms\.gov/.*").mock(side_effect=cms_router({
+        "xubh-q36u": [{"facility_id": "330164", "facility_name": "HIGHLAND HOSPITAL", "zip_code": "60614",
+                       "hospital_overall_rating": "3"}],
+    }))
+
+    def orgs(request):
+        assert request.url.params["name"] == "Highland Hospital"
+        return httpx.Response(200, json={"resourceType": "Bundle", "entry": [
+            # same name, other side of the country: must not match
+            {"resource": {"resourceType": "Organization", "id": "far", "name": "HIGHLAND HOSPITAL",
+                          "address": [{"postalCode": "94602"}]}},
+            # different ZIP than CMS, but ~0.3 mi away by coordinates: should match
+            {"resource": {"resourceType": "Organization", "id": "near", "name": "HIGHLAND HOSPITAL",
+                          "address": [{"postalCode": "60657", "extension": [{
+                              "url": "http://hl7.org/fhir/StructureDefinition/geolocation",
+                              "extension": [{"url": "latitude", "valueDecimal": 41.926},
+                                            {"url": "longitude", "valueDecimal": -87.652}]}]}]}},
+        ]})
+
+    affils = respx.get("https://payer.example/fhir/OrganizationAffiliation").mock(
+        return_value=httpx.Response(200, json={"resourceType": "Bundle", "entry": []}))
+    respx.get("https://payer.example/fhir/Organization").mock(side_effect=orgs)
+    eng = Engine(settings)
+    try:
+        out = await eng.search("hospital")
+    finally:
+        await eng.close()
+    (h,) = out["providers"]
+    assert h["network"] == "listed"  # in the directory, but no plan info published for facilities
+    assert affils.calls.last.request.url.params["participating-organization"] == "Organization/near"

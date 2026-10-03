@@ -21,17 +21,19 @@ patient experience, which none of the government data covers for individual doct
 | Best *local* affiliated hospital | CMS affiliations plus hospital stars | About 50% | Weak to medium | Only hospitals within 60 miles count. Clinicians affiliated only with distant hospitals (telehealth hospitalists) are dropped. |
 | Years in practice | CMS | About 60% | Weak | Capped at 10 years, so it only flags very new clinicians. |
 
+| **NY medical board actions** | Health Data NY `ebmi-8ctw` | Every NY physician and PA | **Strong red flag** | Matched on NY license number from NPPES, so no name-collision false positives. Within 10 miles of 14620 there are about 30 matches across 4 specialties. Restorations and non-disciplinary orders are shown but not penalized. |
+| **Accepting new patients, languages** | MVP Plan-Net roster | MVP clinicians | Practical | Tracked per network. About 60% of in-network primary care clinicians are accepting. |
+| PCI mortality by cardiologist | Health Data NY `ekig-i57g` | 14 local cardiologists | Strong but dated | 2017–2019. Shown, not scored. |
+
 Searches also now drop clinicians whose Medicare specialty is hospitalist,
 emergency, anesthesia, radiology or pathology. These were crowding the primary
 care results.
 
-## Ready to build (free; needs a host added to the network allowlist)
+## Ready to build (free)
 
 | Signal | Source | Strength | Effort | Notes |
 |---|---|---|---|---|
-| **NY disciplinary actions** | NYS Office of Professional Medical Conduct, on Health Data NY (`health.data.ny.gov`, Socrata API) | **Strong red flag** | Small | Every physician and PA disciplined or charged since 1990. Shown as a warning badge, and pushes the provider out of top picks. |
-| **Accepting new patients** | MVP's Plan-Net directory (`newpatients` extension) | Practical, not quality | Already coded | Arrives with the MVP network check. Whether MVP fills it in is unknown until tested. |
-| NY cardiac surgery and PCI outcomes **by individual surgeon or cardiologist** | Health Data NY (`ekig-i57g` and the cardiac surgery dataset) | **Strong, but narrow** | Small | Risk-adjusted mortality per doctor. Very few states publish this. Relevant only for cardiac procedures. |
+| NY cardiac *surgery* outcomes by surgeon | Health Data NY | Strong, but narrow | Small | Would need a "cardiac surgeon" service. |
 | NY hospital infection rates and maternity practices | Health Data NY | Medium | Small | Overlaps heavily with CMS data. Maternity adds C-section and VBAC (birth after a previous C-section) rates by hospital, which would make the OB-GYN search more useful. |
 | Ambulatory surgery center quality and patient surveys | CMS (`4jcv-atw7`, `48nr-hqxx`) | Medium | Small | Useful if you'd add a "surgery center" service. |
 

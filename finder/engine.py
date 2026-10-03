@@ -12,8 +12,8 @@ from .config import Settings
 from .geo import Geocoder, ZipIndex, haversine_miles
 from .models import Provider
 from .services import BY_KEY, Service
-from .sources import cms, nppes
-from .sources.network import NetworkRouter
+from .sources import cms, nppes, nys
+from .sources.network import FhirNetwork, NetworkRouter
 
 log = logging.getLogger(__name__)
 
@@ -107,7 +107,10 @@ class Engine:
         lap("geocode")
 
         if svc.kind == "clinician":
-            await cms.enrich_clinicians(self.http, self.s.datasets, providers)
+            await asyncio.gather(
+                cms.enrich_clinicians(self.http, self.s.datasets, providers),
+                nys.enrich(self.http, providers, cardiology=service == "cardiology"),
+            )
             n0 = len(providers)
             providers = await self._localize(providers)
             log.info("%s: dropped %d hospital-based/remote clinicians", service, n0 - len(providers))
@@ -116,12 +119,19 @@ class Engine:
             scoring.score(p, radius, svc.procedural)
         providers.sort(key=lambda p: -(p.score or 0))
 
-        # Network: check the best-ranked first if lookups are expensive.
         net = self.networks.for_service(service)
-        n = net.eager_limit
-        await net.check(providers[:n])
-        for p in providers[n:]:
-            p.network, p.network_detail = "unchecked", "Not checked yet; open to check"
+        if isinstance(net, FhirNetwork) and svc.kind == "clinician":
+            # one roster pull for the area beats thousands of per-provider lookups
+            codes = {c for c in svc.codes if not c.endswith("*")}
+            codes |= {p.facts["taxonomy"] for p in providers if p.facts.get("taxonomy")}
+            roster = await net.roster(zips, codes)
+            await net.check(providers, roster)
+        else:
+            # check the best-ranked first; the rest on demand from the UI
+            n = net.eager_limit
+            await net.check(providers[:n])
+            for p in providers[n:]:
+                p.network, p.network_detail = "unchecked", "Not checked yet; open to check"
         lap("network")
         log.info("search %s %s: %d providers, timing %s", service, where or self.s.home, len(providers), timing)
 

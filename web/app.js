@@ -3,10 +3,10 @@
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const NET_LABEL = {
-  in_network: "In network", out_of_network: "Out of network", not_listed: "Not in directory",
+  in_network: "In network", listed: "Listed with insurer", out_of_network: "Out of network", not_listed: "Not in directory",
   unknown: "Network unknown", unchecked: "Not checked",
 };
-const NET_COLOR = { in_network: "--in", out_of_network: "--out", not_listed: "--out", unknown: "--unk", unchecked: "--unk" };
+const NET_COLOR = { in_network: "--in", listed: "--in", out_of_network: "--out", not_listed: "--out", unknown: "--unk", unchecked: "--unk" };
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
 const state = { tab: "picks", data: null, markers: new Map(), selected: null };
@@ -66,9 +66,20 @@ function visible() {
 
 function topPicks(rows) {
   // Prefer verified in-network providers; fall back to unknown ones if too few.
-  const inNet = rows.filter((p) => p.network === "in_network");
-  const pool = inNet.length >= 3 ? inNet : rows;
-  return [...pool].filter((p) => p.score != null).sort((a, b) => b.score - a.score).slice(0, 5);
+  const inNet = rows.filter((p) => p.network === "in_network" || p.network === "listed");
+  let pool = inNet.length >= 3 ? inNet : rows;
+  // you're looking for someone new: skip "not taking new patients" if there's choice
+  const open = pool.filter((p) => accepting(p) >= 0);
+  if (open.length >= 3) pool = open;
+  return [...pool]
+    .filter((p) => p.score != null && !p.flagged)
+    .sort((a, b) => (b.score - a.score) || (accepting(b) - accepting(a)))
+    .slice(0, 5);
+}
+
+function accepting(p) {
+  const a = p.facts.accepting || "";
+  return a.startsWith("Accepting") ? 1 : a.startsWith("Not") ? -1 : 0;
 }
 
 function sortRows(rows) {
@@ -86,12 +97,19 @@ function why(p) {
   return good.slice(0, 2).map((c) => `${c.label}: ${c.detail}`).join(" · ") || "No quality data. Ranked by distance.";
 }
 
+function acceptPill(p) {
+  const a = accepting(p);
+  if (a > 0) return '<span class="pill net-in_network">New patients</span>';
+  if (a < 0) return '<span class="pill net-unknown">Not taking new patients</span>';
+  return "";
+}
+
 function card(p, rank) {
   const sub = [p.credential, p.specialty].filter(Boolean).join(" · ");
   return `<li class="card${state.selected === p.id ? " sel" : ""}" data-id="${esc(p.id)}">
     <div class="nm">${rank ? `<span class="rank">${rank}</span>` : ""}${esc(p.name)}</div>
     <div class="sub">${esc(sub)}${p.distance != null ? ` · ${p.distance.toFixed(1)} mi` : ""}</div>
-    <div class="sub"><span class="pill net-${p.network}">${NET_LABEL[p.network]}</span>${p.facts.telehealth ? '<span class="pill">Telehealth</span>' : ""}</div>
+    <div class="sub"><span class="pill net-${p.network}">${NET_LABEL[p.network]}</span>${acceptPill(p)}${p.facts.telehealth ? '<span class="pill">Telehealth</span>' : ""}${p.flagged ? '<span class="pill flag">⚠ NY board action</span>' : p.facts.discipline ? '<span class="pill">Board record</span>' : ""}</div>
     ${rank ? `<div class="why">${esc(why(p))}</div>` : ""}
     <div class="score">${p.score != null ? `<b>${Math.round(p.score)}</b><small>${p.kind === "organization" ? "distance only" : `${Math.round(p.confidence * 100)}% data`}</small>` : "<small>n/a</small>"}</div>
   </li>`;
@@ -133,6 +151,7 @@ function openDetail(id) {
   const facts = [
     ["Credential", p.credential], ["Specialty", p.specialty], ["Group", f.group], ["Medical school", f.medical_school],
     ["Graduated", f.grad_year], ["Telehealth", f.telehealth ? "Yes" : null], ["New patients", f.accepting],
+    ["Languages", (f.languages || []).join(", ") || null],
     ["Emergency dept", isHosp ? (f.emergency ? "Yes" : "No") : null], ["Birthing-friendly", f.birthing_friendly ? "Yes (CMS designation)" : null],
     ["Ownership", f.ownership], ["NPI", isHosp ? null : p.id],
   ].filter(([, v]) => v != null && v !== "");
@@ -140,8 +159,10 @@ function openDetail(id) {
   const procs = (f.procedures || []).map((x) => `<li>${esc(x.name)}: ${esc(x.count)} cases, ${Math.round(x.percentile)}th percentile</li>`).join("");
   const gms = (f.group_measures || []).map((m) => `<li>${"★".repeat(Math.round(m.stars))}${"☆".repeat(5 - Math.round(m.stars))} ${esc(m.title)}${m.rate ? ` <span class="note">(${esc(m.rate)}%)</span>` : ""}</li>`).join("");
   const tally = (label, t) => t ? `<li>${esc(label)}: ${t.better} better, ${t.of - t.better - t.worse} same, <b>${t.worse}</b> worse than national (of ${t.of})</li>` : "";
+  const disc = (f.discipline || []).map((a) => `<li><b>${esc(a.date)}</b>${a.severity === "info" ? " (not disciplinary)" : ""}: ${esc(a.action)} <span class="note">${esc(a.notes)}</span></li>`).join("");
+  const pci = f.pci ? `<li>${esc(f.pci.cases)} angioplasty/stent cases at ${esc(f.pci.hospital)} (${esc(f.pci.years)}): risk-adjusted mortality ${esc(f.pci.risk_adjusted_mortality)}%, <b>${esc(f.pci.comparison)}</b></li>` : "";
   const hospQ = isHosp ? [tally("Mortality", f.mortality), tally("Safety", f.safety), tally("Readmissions", f.readmission)].join("") : "";
-  const bk = p.breakdown.map((c) => `<div class="bk"><span class="lab">${esc(c.label)} <small class="note">×${c.weight}</small></span>
+  const bk = p.breakdown.map((c) => `<div class="bk"><span class="lab">${esc(c.label)} ${c.weight ? `<small class="note">×${c.weight}</small>` : ""}</span>
       <span class="meter"><i style="width:${c.value == null ? 0 : Math.round(c.value * 100)}%"></i></span>
       <span class="det">${esc(c.detail)}</span></div>`).join("");
   const el = $("#detail");
@@ -152,9 +173,10 @@ function openDetail(id) {
     <div>${p.phone ? `<a href="tel:${esc(p.phone)}">${esc(fmtPhone(p.phone))}</a> · ` : ""}
       <a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}">Directions</a>
       ${p.distance != null ? ` · ${p.distance.toFixed(1)} mi` : ""}</div>
+    ${disc ? `<div class="alert"><b>New York medical board action</b><ul>${disc}</ul><a target="_blank" rel="noopener" href="https://apps.health.ny.gov/pubdoh/professionals/doctors/conduct/factions/HomeAction.action">Full record (NYS DOH)</a></div>` : ""}
     <h3>Network</h3>
     <div><span class="pill net-${p.network}">${NET_LABEL[p.network]}</span> <span class="note">${esc(p.network_detail)}</span></div>
-    ${state.data.network_source !== "none" && (p.network === "unchecked" || p.network === "unknown") ? `<p><button class="btn" id="chk">Check network now</button></p>` : ""}
+    ${state.data.network_source !== "none" && ["unchecked", "unknown", "not_listed"].includes(p.network) ? `<p><button class="btn" id="chk">Check network now</button></p>` : ""}
     <p class="note">Directories are often stale. Call the office and confirm they take your specific plan before booking.</p>
     <h3>Score ${p.score != null ? Math.round(p.score) : "n/a"} <span class="note">(${Math.round(p.confidence * 100)}% of quality data available)</span></h3>
     ${bk}
@@ -162,6 +184,7 @@ function openDetail(id) {
     <h3>Details</h3>
     <dl>${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
     ${hospQ ? `<h3>CMS outcome measures</h3><ul>${hospQ}</ul>` : ""}
+    ${pci ? `<h3>NY cardiac outcomes</h3><ul>${pci}</ul><p class="note">State-published, risk-adjusted, but several years old.</p>` : ""}
     ${procs ? `<h3>Medicare procedure volume</h3><ul>${procs}</ul><p class="note">Higher volume tends to mean better surgical outcomes. These counts are Medicare patients only.</p>` : ""}
     ${gms ? `<h3>Practice quality measures</h3><ul>${gms}</ul><p class="note">Reported by the whole practice group to Medicare.</p>` : ""}
     ${hosps ? `<h3>Local hospital affiliations</h3><ul>${hosps}</ul>` : ""}

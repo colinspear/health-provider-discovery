@@ -28,18 +28,33 @@ and the geocoder), so it can take 30–90 seconds. Responses are cached in
 
 The NPPES registry lists every provider, but it doesn't know which ones are in your
 network. List your networks in `config.yaml`; each search uses the network that
-covers that service. See `config.example.yaml` for an MVP (medical) + Guardian
-(dental/vision) setup.
+covers that service. `config.example.yaml` is set up for MVP (medical) and
+Guardian (dental), with Davis Vision for routine eye exams.
 
 | `type` | What you do | Accuracy |
 |---|---|---|
-| `fhir` | Set `fhir_base_url` to your insurer's public provider-directory API. To narrow it to your plan, run `GET /api/networks?q=<plan name>` and put the IDs it returns in `fhir_network_ids`. | Best, if your insurer publishes your plan's network there. MVP publishes one. |
-| `csv` | Export or save your insurer's search results as a CSV with an `npi` column, or `name` + `zip` columns. | As good as your export. |
+| `fhir` | Set `fhir_base_url` to your insurer's public provider-directory API. To narrow it to your plan, run `GET /api/networks?q=<plan name>` and put the IDs it returns in `fhir_network_ids`. | Best. Includes "accepting new patients" and languages when the insurer publishes them. |
+| `csv` | A CSV with an `npi` column, or `name` + `zip` columns. An optional `accepting` column (Y/N) is also read. | As good as the file. |
 | `none` | Nothing. Every provider shows "unknown". | n/a |
 
-Why the API needs no login: since 2021, CMS has required Medicare Advantage and
-Medicaid plans to publish an open FHIR provider directory (Da Vinci PDex Plan-Net),
-and many insurers serve their commercial networks from the same API.
+**MVP** (`fhir`, no login). For clinicians, the app pulls MVP's roster for the
+search area: one query per ZIP code and specialty, about 30 seconds the first time
+and cached for a week. That gives network status, accepting-new-patients and
+languages for everyone at once. `MVP-34` is the "MVP EPO / PPO" network, which
+covers Core EPO. MVP lists facilities (hospitals, urgent care, imaging) but doesn't
+say which plans each one takes, so they show as "Listed with insurer".
+
+**Guardian Dental** (`csv`). Guardian's directory is behind bot protection, so the
+app can't query it. Instead:
+1. Open https://www.guardianlife.com/find-a-dentist in your browser and run one search.
+2. Open the browser console and paste in `tools/guardian_dental_export.js`. It
+   pages through the results and downloads `guardian_dental.csv`, with NPIs and
+   accepting-new-patients.
+3. Move that file into `data/`. Re-run it every few months.
+
+**Davis Vision** (`csv`). For now, save in-network optometrists from Davis Vision's
+locator into `data/davis_vision.csv` with `name` and `zip` columns. An export
+script like Guardian's is possible once `davisvision.com` can be inspected.
 
 ## How ranking works
 
@@ -58,6 +73,13 @@ sources were considered and why, see [docs/quality-signals.md](docs/quality-sign
   better or worse than the national rate.
 - **Urgent care, imaging, and labs**: distance only. No public quality data exists for these.
 
+**Red flags.** New York medical board actions (since 1990) are matched on NY license
+number. A license surrender, revocation, suspension or limitation cuts the score by 80%.
+Censure or probation cuts it by 50% if it's from the last 10 years, otherwise by 20%.
+Flagged providers never appear in top picks. Restorations and non-disciplinary
+orders are shown but not penalized. For cardiologists, NY's risk-adjusted
+angioplasty (PCI) mortality is shown as context; the data is from 2017–2019.
+
 Missing data is skipped, not counted as zero. The score is then pulled toward 50 in
 proportion to how much quality data is missing, so a clinician with no data can't
 beat one with strong data just by being closer. Searches also drop hospitalists,
@@ -72,6 +94,7 @@ with the office that they take your specific plan.
 
 - [NPPES NPI Registry API](https://npiregistry.cms.hhs.gov/api-page): who exists, their specialty and address
 - [CMS Provider Data Catalog](https://data.cms.gov/provider-data/): clinician details, MIPS scores, procedure volumes, practice quality measures, hospital affiliations, hospital stars and outcome measures, HCAHPS patient surveys
+- [Health Data NY](https://health.data.ny.gov): medical board actions, PCI outcomes by cardiologist
 - [Census Geocoder](https://geocoding.geo.census.gov/) and the ZCTA gazetteer: map pins and radius search
 - Your insurer's Plan-Net FHIR API, or your own CSV: network status
 - OpenStreetMap tiles, drawn with Leaflet (bundled in `web/vendor`)

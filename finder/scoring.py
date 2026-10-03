@@ -99,3 +99,25 @@ def score(p: Provider, radius: float, procedural: bool = False) -> None:
     else:
         # organizations: no quality data exists at all, so rank on what we have
         p.score = round(raw, 1)
+    if mult := discipline_multiplier(p.facts.get("discipline") or []):
+        # a state medical board action outweighs everything else we know
+        p.score = round(p.score * mult, 1)
+        p.flagged = mult <= 0.5
+        worst = next(a for a in p.facts["discipline"] if a["severity"] != "info")
+        p.breakdown.append({
+            "key": "discipline", "label": "NY medical board action", "value": 0.0, "weight": 0,
+            "detail": f"{worst['date']}: {worst['action']} Score cut by {round((1 - mult) * 100)}%.",
+            "quality": False,
+        })
+
+
+def discipline_multiplier(actions: list[dict]) -> float | None:
+    """None if nothing counts against the provider; else a score multiplier."""
+    mults = []
+    for a in actions:
+        if a["severity"] == "severe":
+            mults.append(0.2)
+        elif a["severity"] == "moderate":
+            recent = a["date"][:4].isdigit() and date.today().year - int(a["date"][:4]) <= 10
+            mults.append(0.5 if recent else 0.8)
+    return min(mults) if mults else None

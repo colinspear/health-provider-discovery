@@ -17,20 +17,23 @@ networks:
     services: ["*"]
     type: fhir
     fhir_base_url: https://api.mvphealthcare.com/provdirfhirapi
-    # Empty = anyone listed in MVP's directory counts. To narrow to your plan:
-    #   curl 'localhost:8765/api/networks?q=<plan name from your card>'
-    fhir_network_ids: []
-    fhir_eager_check: 150
+    # MVP-34 = "MVP EPO / PPO" (covers Core EPO). Empty = anyone in MVP's directory.
+    # Other plans: curl 'localhost:8765/api/networks?q=<plan name from your card>'
+    fhir_network_ids: [MVP-34]
+    fhir_eager_check: 60
 
+  # Make this file with tools/guardian_dental_export.js (see README)
   - name: Guardian Dental
     services: [dentist]
     type: csv
     csv_path: data/guardian_dental.csv
 
-  - name: Guardian Vision
+  # Routine eye exams go through the vision plan; medical eye care (ophthalmology)
+  # stays with MVP. CSV with npi, or name + zip, columns.
+  - name: Davis Vision
     services: [optometry]
     type: csv
-    csv_path: data/guardian_vision.csv
+    csv_path: data/davis_vision.csv
 
 # Other public Plan-Net directories (unverified starting points):
 #   UnitedHealthcare  https://flex.optum.com/fhirpublic/R4

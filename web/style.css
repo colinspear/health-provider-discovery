@@ -51,8 +51,12 @@ main { flex: 1; display: grid; grid-template-columns: minmax(340px, 440px) 1fr; 
 .score b { font-size: 20px; display: block; line-height: 1; }
 .score small { color: var(--muted); font-size: 11px; }
 .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; margin-right: 4px; white-space: nowrap; }
-.net-in_network { color: var(--in); } .net-out_of_network, .net-not_listed { color: var(--out); }
+.net-in_network, .net-listed { color: var(--in); } .net-out_of_network, .net-not_listed { color: var(--out); }
 .net-unknown, .net-unchecked { color: var(--unk); }
+.pill.flag { color: var(--out); font-weight: 600; }
+.alert { border: 1px solid var(--out); border-radius: 8px; padding: 8px 12px; margin: 12px 0; }
+.alert b:first-child { color: var(--out); }
+.alert ul { margin: 6px 0; padding-left: 18px; }
 .empty { padding: 24px 12px; color: var(--muted); }
 
 .detail { position: absolute; inset: 0 auto 0 0; width: min(440px, 100%); background: var(--surface); border-right: 1px solid var(--line); overflow-y: auto; padding: 14px 16px 24px; z-index: 1000; }

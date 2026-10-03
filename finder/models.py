@@ -28,6 +28,7 @@ class Provider:
     score: float | None = None
     confidence: float = 0.0
     breakdown: list[dict] = field(default_factory=list)
+    flagged: bool = False  # serious/recent board action: kept out of top picks
 
     @property
     def npi(self) -> str | None:

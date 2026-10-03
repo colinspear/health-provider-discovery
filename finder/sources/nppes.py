@@ -62,7 +62,12 @@ def parse_result(r: dict, svc: Service) -> Provider | None:
         state=addr.get("state", ""),
         zip=(addr.get("postal_code") or "")[:5],
         phone=addr.get("telephone_number", ""),
-        facts={"gender": basic.get("gender") or basic.get("sex") or ""},
+        facts={
+            "gender": basic.get("gender") or basic.get("sex") or "",
+            "taxonomy": tax.get("code", ""),
+            # (state, license number): joins to state licensing/discipline data
+            "licenses": sorted({(t.get("state") or "", t.get("license") or "") for t in taxes if t.get("license")}),
+        },
     )
 
 
