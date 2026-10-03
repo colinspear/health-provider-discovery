@@ -1,0 +1,22 @@
+# Copy to config.yaml and edit.  (config.yaml is git-ignored.)
+
+home: "60614"          # ZIP code or full street address
+radius_miles: 10
+max_zips: 60           # ZIP codes queried per search, nearest first
+precise_geocoding: true  # street-level pins via the free Census geocoder
+
+network:
+  # none | csv | fhir   (see README, "Connect your network")
+  type: none
+
+  # type: csv  ->  any CSV with an "npi" column (hospitals: put the CMS CCN in that column)
+  csv_path: data/in_network.csv
+
+  # type: fhir ->  your insurer's public Plan-Net provider directory (no login)
+  # Unverified starting points from insurer docs; confirm for your plan:
+  #   UnitedHealthcare  https://flex.optum.com/fhirpublic/R4
+  #   Cigna             https://p-hi2.digitaledge.cigna.com/ProviderDirectory/v1
+  #   Humana            https://fhir.humana.com/api
+  fhir_base_url: ""
+  fhir_network_ids: []   # find with: curl 'localhost:8765/api/networks?q=<plan name>'
+  fhir_eager_check: 60

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Provider Finder</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%232f6fde' d='M6 1h4v5h5v4h-5v5H6v-5H1V6h5z'/></svg>">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>Provider Finder</h1>
+    <form id="q" class="controls">
+      <label>Service <select id="service"></select></label>
+      <label>Near <input id="where" size="12" placeholder="ZIP or address"></label>
+      <label>Within
+        <select id="radius">
+          <option>3</option><option>5</option><option selected>10</option>
+          <option>15</option><option>25</option><option>40</option>
+        </select> mi
+      </label>
+      <button type="submit">Search</button>
+    </form>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main>
+    <section class="panel">
+      <nav class="tabs">
+        <button data-tab="picks" class="on">Top picks</button>
+        <button data-tab="browse">Browse all <span id="count"></span></button>
+      </nav>
+      <div class="filters">
+        <select id="netfilter" title="Network filter">
+          <option value="ok">Hide out-of-network</option>
+          <option value="in">In-network only</option>
+          <option value="all">Show everything</option>
+        </select>
+        <select id="sort" title="Sort" class="browse-only">
+          <option value="score">Best match</option>
+          <option value="distance">Nearest</option>
+          <option value="name">Name</option>
+        </select>
+        <input id="filter" type="search" placeholder="Filter by name…" class="browse-only">
+      </div>
+      <div id="status" class="status"></div>
+      <ol id="list" class="list"></ol>
+    </section>
+    <section id="map" class="map" aria-label="Map"></section>
+    <aside id="detail" class="detail" hidden></aside>
+  </main>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
