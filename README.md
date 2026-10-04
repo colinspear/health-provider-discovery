@@ -52,9 +52,15 @@ app can't query it. Instead:
    accepting-new-patients.
 3. Move that file into `data/`. Re-run it every few months.
 
-**Davis Vision** (`csv`). For now, save in-network optometrists from Davis Vision's
-locator into `data/davis_vision.csv` with `name` and `zip` columns. An export
-script like Guardian's is possible once `davisvision.com` can be inspected.
+**Davis Vision, or any other insurer's locator** (`csv`). These sites block
+scripted access, but your browser can capture what their pages load:
+1. Open the locator (for Davis, enter your client code), open the browser console,
+   and paste in `tools/capture_directory.js`.
+2. Search, click through every page of results, then type `hpdSave()` in the console.
+3. Run `python -m finder.import_capture ~/Downloads/directory_capture.json data/davis_vision.csv`
+
+The importer finds anything provider-shaped (a name and a ZIP, plus NPI and
+accepting-new-patients when present), whatever the site's JSON format.
 
 ## How ranking works
 
